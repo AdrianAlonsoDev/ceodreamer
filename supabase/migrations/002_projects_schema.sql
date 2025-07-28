@@ -17,8 +17,6 @@ CREATE TABLE project_messages (
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
   content JSONB NOT NULL,
-  fragment JSONB, -- Store the fragment schema here
-  result JSONB,   -- Store execution results
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

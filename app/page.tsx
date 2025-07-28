@@ -57,33 +57,16 @@ export default function ProjectPage() {
   const { projects, createProject, deleteProject } = useProjects(session)
   const { project, messages: projectMessages, saveMessage, loading: projectLoading } = useProject(currentProjectId, session)
 
-  // Sync project messages to local state and load last fragment/result
+  // Sync project messages to local state
   useEffect(() => {
     if (projectMessages.length > 0) {
       const formattedMessages: Message[] = projectMessages.map(msg => ({
         role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-        object: msg.fragment,
-        result: msg.result
+        content: msg.content
       }))
       setMessages(formattedMessages)
-      
-      // Find the last message with a fragment and result
-      const lastFragmentMessage = [...projectMessages].reverse().find(msg => msg.fragment && msg.result)
-      if (lastFragmentMessage) {
-        setFragment(lastFragmentMessage.fragment)
-        setResult(lastFragmentMessage.result)
-        setCurrentTab('fragment')
-      } else {
-        setFragment(undefined)
-        setResult(undefined)
-        setCurrentTab('code')
-      }
     } else {
       setMessages([])
-      setFragment(undefined)
-      setResult(undefined)
-      setCurrentTab('code')
     }
   }, [projectMessages])
 
@@ -141,9 +124,7 @@ export default function ProjectPage() {
         // Save assistant message to project
         await saveMessage({
           role: 'assistant',
-          content: [{ type: 'text', text: fragment?.commentary || '' }],
-          fragment,
-          result
+          content: [{ type: 'text', text: fragment?.commentary || '' }]
         })
         
         setCurrentTab('fragment')
@@ -303,6 +284,12 @@ export default function ProjectPage() {
     const updatedMessages = addMessage({
       role: 'user',
       content,
+    })
+    
+    // Save user message to project
+    await saveMessage({
+      role: 'user',
+      content
     })
 
     submit({
