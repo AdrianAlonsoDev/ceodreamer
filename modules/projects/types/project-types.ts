@@ -24,3 +24,10 @@ export interface ProjectMessage {
   result?: ExecutionResult
   created_at: Date
 }
+
+export type ProjectCreateData = {
+  name: string
+  description?: string
+  template_id: string
+  team_id: string
+}

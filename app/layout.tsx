@@ -1,5 +1,5 @@
 import './globals.css'
-import { PostHogProvider, ThemeProvider } from './providers'
+import { PostHogProvider, ThemeProvider, AppProviders } from './providers'
 import { Toaster } from '@/modules/shared/components/ui/toaster'
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata } from 'next'
@@ -21,14 +21,16 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <PostHogProvider>
         <body className={inter.className}>
-          <ThemeProvider
-            attribute="class"
-            defaultTheme="dark"
-            enableSystem
-            disableTransitionOnChange
-          >
-            {children}
-          </ThemeProvider>
+          <AppProviders>
+            <ThemeProvider
+              attribute="class"
+              defaultTheme="dark"
+              enableSystem
+              disableTransitionOnChange
+            >
+              {children}
+            </ThemeProvider>
+          </AppProviders>
           <Toaster />
           <Analytics />
         </body>

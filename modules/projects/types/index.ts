@@ -1,4 +1,4 @@
-import { Project } from '@/modules/projects/types/project-types'
+import { Project, ProjectCreateData as ProjectCreateDataBase } from '@/modules/projects/types/project-types'
 import { Templates, TemplateId } from '@/modules/templates/lib/templates'
 import { SupabaseClient, Session } from '@supabase/supabase-js'
 import { DeepPartial } from 'ai'
@@ -17,13 +17,10 @@ export interface UseProjectManagementProps {
   onStateReset?: () => void
 }
 
-// Data types
-export interface ProjectCreateData {
-  name: string
-  template_id: TemplateId
-  team_id: string
+// Data types - extend base type with additional fields
+export interface ProjectCreateData extends ProjectCreateDataBase {
+  template_id: TemplateId  // Override to use specific TemplateId type
   visibility?: 'private' | 'public'
-  description?: string
 }
 
 export interface ProjectMessageData {

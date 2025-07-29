@@ -39,7 +39,7 @@ export function ChatInput({
   handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void
   isMultiModal: boolean
   files: File[]
-  handleFileChange: (change: SetStateAction<File[]>) => void
+  handleFileChange: React.Dispatch<React.SetStateAction<File[]>>
   children: React.ReactNode
 }) {
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
@@ -166,7 +166,10 @@ export function ChatInput({
             className={`px-2 py-1 rounded-sm ${
               isRateLimited ? 'bg-orange-400/20' : 'bg-red-400/20'
             }`}
-            onClick={retry}
+            onClick={(e) => {
+              e.preventDefault()
+              retry()
+            }}
           >
             Try again
           </button>

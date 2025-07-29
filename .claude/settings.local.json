@@ -3,7 +3,9 @@
     "allow": [
       "Bash(mkdir -p /mnt/c/Users/Adrian/Documents/DESARROLLO/REPOS/fragments/types)",
       "Bash(mkdir:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(find:*)",
+      "Bash(rmdir:*)"
     ],
     "deny": []
   }

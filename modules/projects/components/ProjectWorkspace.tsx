@@ -1,3 +1,4 @@
+import React from 'react'
 import { NavBar } from '@/modules/shared/components/navbar'
 import { Chat } from '@/modules/chat/components/chat'
 import { ChatInput } from '@/modules/chat/components/chat-input'
@@ -48,7 +49,7 @@ interface ProjectWorkspaceProps {
   chatInput: string
   setChatInput: (input: string) => void
   files: File[]
-  setFiles: (files: File[]) => void
+  setFiles: React.Dispatch<React.SetStateAction<File[]>>
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void
   
   // Chat submission
@@ -141,7 +142,7 @@ export function ProjectWorkspace({
         />
         <ChatInput
           retry={onRetry}
-          isErrored={error !== undefined}
+          isErrored={!!error}
           errorMessage={errorMessage}
           isLoading={isLoading}
           isRateLimited={isRateLimited}

@@ -4,6 +4,8 @@ import { Session } from '@supabase/supabase-js'
 import { usePostHog } from 'posthog-js/react'
 import { useEffect } from 'react'
 import { useAuthStore } from '@/modules/auth/store/auth-store'
+import { AuthService } from '@/modules/auth/services/auth.service'
+import { ConsoleLogger } from '@/modules/shared/services/base.service'
 
 export async function getUserTeam(
   session: Session,
@@ -28,6 +30,23 @@ export async function getUserTeam(
   }
 }
 
+// Create a singleton auth service instance
+let authServiceInstance: AuthService | null = null
+
+async function getAuthService(posthog: any) {
+  if (!authServiceInstance) {
+    authServiceInstance = new AuthService({
+      supabase,
+      logger: new ConsoleLogger('AuthService'),
+      posthog
+    })
+    if (authServiceInstance.initialize) {
+      await authServiceInstance.initialize()
+    }
+  }
+  return authServiceInstance
+}
+
 export function useAuth() {
   const { 
     session, 
@@ -40,67 +59,48 @@ export function useAuth() {
   const posthog = usePostHog()
 
   useEffect(() => {
-    if (!supabase) {
-      console.warn('Supabase is not initialized')
-      return setSession({ user: { email: 'demo@e2b.dev' } } as Session)
+    // Get or create auth service
+    const initAuth = async () => {
+      const authService = await getAuthService(posthog)
+      
+      // Sync initial state from service
+      setSession(authService.getSession())
+      setUserTeam(authService.getUserTeam())
+
+      // Subscribe to auth state changes from the service
+      const unsubscribe = authService.onAuthStateChange((event, session) => {
+        setSession(session)
+
+        if (event === 'PASSWORD_RECOVERY') {
+          setAuthView('update_password')
+          setAuthDialog(true)
+        }
+
+        if (event === 'SIGNED_IN') {
+          authService.fetchUserTeam(session as Session).then(setUserTeam)
+          setAuthDialog(false)
+        }
+
+        if (event === 'SIGNED_OUT') {
+          setAuthView('sign_in')
+          setUserTeam(undefined)
+        }
+      })
+
+      return unsubscribe
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      if (session) {
-        getUserTeam(session).then(setUserTeam)
-        if (!session.user.user_metadata.is_fragments_user) {
-          supabase?.auth.updateUser({
-            data: { is_fragments_user: true },
-          })
-        }
-        posthog.identify(session?.user.id, {
-          email: session?.user.email,
-          supabase_id: session?.user.id,
-        })
-        posthog.capture('sign_in')
-      }
+    let unsubscribe: (() => void) | undefined
+    initAuth().then(unsub => {
+      unsubscribe = unsub
     })
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-
-      if (_event === 'PASSWORD_RECOVERY') {
-        setAuthView('update_password')
-        setAuthDialog(true)
+    return () => {
+      if (unsubscribe) {
+        unsubscribe()
       }
-
-      if (_event === 'USER_UPDATED') {
-        // Password was updated successfully
-      }
-
-      if (_event === 'SIGNED_IN') {
-        getUserTeam(session as Session).then(setUserTeam)
-        setAuthDialog(false)
-        if (!session?.user.user_metadata.is_fragments_user) {
-          supabase?.auth.updateUser({
-            data: { is_fragments_user: true },
-          })
-        }
-        posthog.identify(session?.user.id, {
-          email: session?.user.email,
-          supabase_id: session?.user.id,
-        })
-        posthog.capture('sign_in')
-      }
-
-      if (_event === 'SIGNED_OUT') {
-        setAuthView('sign_in')
-        setUserTeam(undefined)
-        posthog.capture('sign_out')
-        posthog.reset()
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [posthog]) // Remove store setters to avoid infinite loops
+    }
+  }, [posthog, setSession, setUserTeam, setAuthDialog, setAuthView])
 
   return {
     session,
