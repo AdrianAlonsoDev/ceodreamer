@@ -1,4 +1,5 @@
 import { BaseService, ILogger, IService } from '@/modules/shared/services/base.service'
+import { IAnalyticsService, getAnalyticsService } from '@/modules/shared/services/analytics.service'
 import { Message, toMessageImage } from '@/modules/chat/types/messages'
 import { DeepPartial } from 'ai'
 import { FragmentSchema } from '@/modules/shared/lib/schema'
@@ -28,12 +29,15 @@ export interface IChatService extends IService {
  */
 export class ChatService extends BaseService implements IChatService {
   readonly serviceName = 'ChatService'
+  private analyticsService: IAnalyticsService | null = null
   
   constructor(private deps: ChatServiceDependencies) {
     super()
   }
   
   protected async onInitialize(): Promise<void> {
+    // Initialize analytics service
+    this.analyticsService = await getAnalyticsService(this.deps.posthog)
     this.deps.logger?.info('ChatService initialized')
   }
   
@@ -55,21 +59,14 @@ export class ChatService extends BaseService implements IChatService {
   }
   
   trackChatSubmit(template: string | 'auto', model: string, projectId?: string): void {
-    if (this.deps.posthog) {
-      this.deps.posthog.capture('chat_submit', {
-        template,
-        model,
-        projectId
-      })
+    if (this.analyticsService) {
+      this.analyticsService.trackChatSubmit(template, model, projectId)
     }
   }
   
   trackFragmentGenerated(template: string | undefined, projectId: string): void {
-    if (this.deps.posthog) {
-      this.deps.posthog.capture('fragment_generated', {
-        template,
-        projectId
-      })
+    if (this.analyticsService) {
+      this.analyticsService.trackFragmentGenerated(template, projectId)
     }
   }
 }

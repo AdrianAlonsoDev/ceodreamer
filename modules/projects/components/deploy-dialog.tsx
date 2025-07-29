@@ -18,7 +18,7 @@ import {
 } from '@/modules/shared/components/ui/dropdown-menu'
 import { Input } from '@/modules/shared/components/ui/input'
 import { Duration } from '@/modules/shared/lib/duration'
-import { usePostHog } from 'posthog-js/react'
+import { useAnalytics } from '@/modules/shared/hooks/useAnalytics'
 import { useEffect, useState } from 'react'
 
 export function DeployDialog({
@@ -32,7 +32,7 @@ export function DeployDialog({
   teamID: string | undefined
   accessToken: string | undefined
 }) {
-  const posthog = usePostHog()
+  const analytics = useAnalytics()
 
   const [publishedURL, setPublishedURL] = useState<string | null>(null)
   const [duration, setDuration] = useState<string | null>(null)
@@ -51,9 +51,7 @@ export function DeployDialog({
       accessToken,
     )
     setPublishedURL(publishedURL)
-    posthog.capture('publish_url', {
-      url: publishedURL,
-    })
+    analytics?.trackPublishUrl(url, slug, publishedURL)
   }
 
   return (

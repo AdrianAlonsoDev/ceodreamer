@@ -1,5 +1,6 @@
 import { BaseService, ServiceError, ILogger, IService } from '@/modules/shared/services/base.service'
 import { ServiceDependencies } from '@/modules/shared/services/service-registry'
+import { IAnalyticsService, getAnalyticsService } from '@/modules/shared/services/analytics.service'
 import { Session, User, AuthChangeEvent } from '@supabase/supabase-js'
 import { UserTeam } from '@/modules/auth/types'
 
@@ -35,6 +36,7 @@ export class AuthService extends BaseService implements IAuthService {
   private userTeam: UserTeam | undefined
   private authStateSubscription: { unsubscribe: () => void } | null = null
   private authStateCallbacks: Array<(event: AuthChangeEvent, session: Session | null) => void> = []
+  private analyticsService: IAnalyticsService | null = null
 
   constructor(
     private deps: ServiceDependencies & {
@@ -45,6 +47,9 @@ export class AuthService extends BaseService implements IAuthService {
   }
 
   protected async onInitialize(): Promise<void> {
+    // Initialize analytics service
+    this.analyticsService = await getAnalyticsService(this.deps.posthog)
+    
     if (!this.deps.supabase) {
       this.deps.logger?.warn('Supabase is not initialized, using demo mode')
       this.session = { user: { email: 'demo@e2b.dev' } } as Session
@@ -267,19 +272,17 @@ export class AuthService extends BaseService implements IAuthService {
   }
 
   private trackSignIn(session: Session): void {
-    if (!this.deps.posthog) return
+    if (!this.analyticsService) return
 
-    this.deps.posthog.identify(session.user.id, {
+    this.analyticsService.trackSignIn(session.user.id, {
       email: session.user.email,
       supabase_id: session.user.id,
     })
-    this.deps.posthog.capture('sign_in')
   }
 
   private trackSignOut(): void {
-    if (!this.deps.posthog) return
+    if (!this.analyticsService) return
 
-    this.deps.posthog.capture('sign_out')
-    this.deps.posthog.reset()
+    this.analyticsService.trackSignOut()
   }
 }
