@@ -1,7 +1,25 @@
 import { FragmentSchema } from '@/modules/shared/lib/schema'
-import { SandboxManager } from '@/modules/sandbox/lib/sandbox-manager'
+import { SandboxService, ISandboxService } from '@/modules/sandbox/services/sandbox.service'
+import { ConsoleLogger } from '@/modules/shared/services/base.service'
+import { supabase } from '@/infrastructure/supabase/supabase'
 
 export const maxDuration = 60
+
+// Get or create sandbox service singleton
+let sandboxServiceInstance: ISandboxService | null = null
+
+async function getSandboxService(): Promise<ISandboxService> {
+  if (!sandboxServiceInstance) {
+    sandboxServiceInstance = new SandboxService({
+      supabase,
+      logger: new ConsoleLogger('SandboxService')
+    })
+    if (sandboxServiceInstance.initialize) {
+      await sandboxServiceInstance.initialize()
+    }
+  }
+  return sandboxServiceInstance
+}
 
 export async function POST(
   req: Request,
@@ -26,9 +44,11 @@ export async function POST(
   console.log('Auth details:', { userID, teamID, hasAccessToken: !!accessToken })
 
   try {
+    const sandboxService = await getSandboxService()
+    
     // Handle pause/resume operations
     if (operation === 'pause' || operation === 'resume') {
-      const result = await SandboxManager.executeSandboxOperation?.(
+      const result = await sandboxService.executeSandboxOperation(
         projectId,
         operation,
         { userId: userID, teamId: teamID, accessToken }
@@ -41,7 +61,7 @@ export async function POST(
     }
 
     // Process the fragment
-    const result = await SandboxManager.processFragment(
+    const result = await sandboxService.processFragment(
       projectId,
       fragment,
       { userId: userID, teamId: teamID, accessToken }

@@ -1,262 +1,190 @@
 'use client'
 
-import { ViewType } from '@/modules/auth/components/auth'
+import { useEffect, useState, useRef } from 'react'
+import { useLocalStorage } from 'usehooks-ts'
+import { usePostHog } from 'posthog-js/react'
 import { AuthDialog } from '@/modules/auth/components/auth-dialog'
-import { Chat } from '@/modules/chat/components/chat'
-import { ChatInput } from '@/modules/chat/components/chat-input'
-import { ChatPicker } from '@/modules/chat/components/chat-picker'
-import { ChatSettings } from '@/modules/chat/components/chat-settings'
-import { NavBar } from '@/modules/shared/components/navbar'
-import { Preview } from '@/modules/sandbox/components/preview'
-import { ProjectSelector } from '@/modules/projects/components/project-selector'
 import { useAuth } from '@/modules/auth/lib/auth'
-import { Message, toAISDKMessages, toMessageImage } from '@/modules/chat/types/messages'
-import { LLMModelConfig } from '@/modules/ai/lib/models'
-import modelsList from '@/modules/ai/lib/models.json'
-import { FragmentSchema, fragmentSchema as schema } from '@/modules/shared/lib/schema'
+import { useAuthStore } from '@/modules/auth/store/auth-store'
+import { useUIStore } from '@/modules/shared/store/ui-store'
+import { useProject, useProjects } from '@/modules/projects/hooks/useProject'
+import { useChatState } from '@/modules/chat/hooks/useChatState'
+import { useChatSubmission } from '@/modules/chat/hooks/useChatSubmission'
+import { useProjectManagement } from '@/modules/projects/hooks/useProjectManagement'
+import { ProjectEmptyState } from '@/modules/projects/components/ProjectEmptyState'
+import { ProjectWorkspace } from '@/modules/projects/components/ProjectWorkspace'
+import { LoadingState } from '@/modules/shared/components/LoadingState'
 import { supabase } from '@/infrastructure/supabase/supabase'
 import templates, { TemplateId } from '@/modules/templates/lib/templates'
-import { ExecutionResult } from '@/modules/shared/lib/types'
-import { DeepPartial } from 'ai'
-import { experimental_useObject as useObject } from 'ai/react'
-import { usePostHog } from 'posthog-js/react'
-import { SetStateAction, useEffect, useState } from 'react'
-import { useLocalStorage } from 'usehooks-ts'
-import { useProject, useProjects } from '@/modules/projects/hooks/useProject'
-import { Project } from '@/modules/projects/types/project-types'
-import { SandboxManager } from '@/modules/sandbox/lib/sandbox-manager'
+import modelsList from '@/modules/ai/lib/models.json'
+import { LLMModelConfig } from '@/modules/ai/lib/models'
+import { toAISDKMessages } from '@/modules/chat/types/messages'
 
 export default function ProjectPage() {
+  // Basic UI state
   const [mounted, setMounted] = useState(false)
-  const [chatInput, setChatInput] = useLocalStorage('chat', '')
-  const [files, setFiles] = useState<File[]>([])
-  const [selectedTemplate, setSelectedTemplate] = useState<'auto' | TemplateId>('auto')
-  const [languageModel, setLanguageModel] = useLocalStorage<LLMModelConfig>(
-    'languageModel',
-    { model: 'claude-3-5-sonnet-latest' }
-  )
-  const [currentProjectId, setCurrentProjectId] = useLocalStorage<string | null>('currentProjectId', null)
+  
+  // UI state
+  const { languageModel, setLanguageModel, previewVisible, setPreviewVisible } = useUIStore()
+  
+  // We'll get chat state from useChatState hook which returns the store
   
   const posthog = usePostHog()
   
+  // Mount check
   useEffect(() => {
     setMounted(true)
   }, [])
   
-  const [result, setResult] = useState<ExecutionResult>()
-  const [messages, setMessages] = useState<Message[]>([])
-  const [fragment, setFragment] = useState<DeepPartial<FragmentSchema>>()
-  const [currentTab, setCurrentTab] = useState<'code' | 'fragment'>('code')
-  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
-  const [isAuthDialogOpen, setAuthDialog] = useState(false)
-  const [authView, setAuthView] = useState<ViewType>('sign_in')
-  const [isRateLimited, setIsRateLimited] = useState(false)
-  const [errorMessage, setErrorMessage] = useState('')
-  
-  const { session, userTeam } = useAuth(setAuthDialog, setAuthView)
+  // Auth & Projects
+  const { session, userTeam } = useAuth()
+  const { isAuthDialogOpen, authView, setAuthDialog } = useAuthStore()
   const { projects, createProject, deleteProject } = useProjects(session)
-  const { project, messages: projectMessages, saveMessage, loading: projectLoading } = useProject(currentProjectId, session)
-
-  // Sync project messages to local state
-  useEffect(() => {
-    if (projectMessages.length > 0) {
-      const formattedMessages: Message[] = projectMessages.map(msg => ({
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content
-      }))
-      setMessages(formattedMessages)
-    } else {
-      setMessages([])
+  
+  // Create a mutable ref to hold clearChat
+  const clearChatRef = useRef<(() => void) | undefined>()
+  
+  // Project management
+  const {
+    currentProjectId,
+    selectedTemplate,
+    setSelectedTemplate,
+    handleProjectSelect,
+    handleProjectCreate,
+    handleProjectDelete
+  } = useProjectManagement({
+    projects,
+    createProject,
+    deleteProject,
+    onStateReset: () => {
+      // Use the ref to call clearChat if available
+      clearChatRef.current?.()
     }
-  }, [projectMessages])
-
-  const filteredModels = modelsList.models.filter((model) => {
-    if (process.env.NEXT_PUBLIC_HIDE_LOCAL_MODELS) {
-      return model.providerId !== 'ollama'
-    }
-    return true
   })
+  
+  // Now we can use currentProjectId
+  const { project, messages: projectMessages, saveMessage, loading: projectLoading } = useProject(
+    currentProjectId, 
+    session
+  )
+  
+  const {
+    messages = [],
+    fragment,
+    result,
+    currentTab,
+    chatInput,
+    setChatInput,
+    files,
+    setFiles,
+    setMessages,
+    addMessage,
+    updateMessage,
+    clearChat,
+    undoLastMessage,
+    setCurrentTab,
+    setCurrentPreview,
+    clearPreview,
+    setFragment
+  } = useChatState({ projectMessages })
+  
+  // Update ref whenever clearChat changes
+  clearChatRef.current = clearChat
+  
+  // Chat submission
+  const chatSubmission = useChatSubmission({
+    currentProjectId,
+    session,
+    userTeam,
+    onFragmentGenerated: async (fragment) => {
+      if (!currentProjectId || !session || !userTeam) return
+      
+      const response = await fetch(`/api/projects/${currentProjectId}/sandbox`, {
+        method: 'POST',
+        body: JSON.stringify({
+          fragment,
+          userID: session?.user?.id,
+          teamID: userTeam?.id,
+          accessToken: session?.access_token,
+        }),
+      })
 
-  const currentModel = filteredModels.find(
-    (model) => model.id === languageModel.model,
-  ) || filteredModels[0] // Fallback to first model if not found
-  const currentTemplate = selectedTemplate === 'auto'
-    ? templates
-    : { [selectedTemplate]: templates[selectedTemplate] }
-  const lastMessage = messages[messages.length - 1]
+      const result = await response.json()
+      posthog.capture('sandbox_created', { url: result.url, projectId: currentProjectId })
 
-  const { object, submit, isLoading, stop, error } = useObject({
-    api: currentProjectId ? `/api/projects/${currentProjectId}/chat` : '/api/chat',
-    schema,
-    onError: (error) => {
-      console.error('Error submitting request:', error)
-      if (error.message.includes('limit')) {
-        setIsRateLimited(true)
-      }
-      setErrorMessage(error.message)
-    },
-    onFinish: async ({ object: fragment, error }) => {
-      if (!error && currentProjectId) {
-        console.log('fragment', fragment)
-        setIsPreviewLoading(true)
-        posthog.capture('fragment_generated', {
-          template: fragment?.template,
-          projectId: currentProjectId
-        })
-
-        const response = await fetch(`/api/projects/${currentProjectId}/sandbox`, {
-          method: 'POST',
-          body: JSON.stringify({
-            fragment,
-            userID: session?.user?.id,
-            teamID: userTeam?.id,
-            accessToken: session?.access_token,
-          }),
-        })
-
-        const result = await response.json()
-        console.log('result', result)
-        posthog.capture('sandbox_created', { url: result.url, projectId: currentProjectId })
-
-        setResult(result)
-        setCurrentPreview({ fragment, result })
-        
-        // Save assistant message to project
-        await saveMessage({
-          role: 'assistant',
-          content: [{ type: 'text', text: fragment?.commentary || '' }]
-        })
-        
-        setCurrentTab('fragment')
-        setIsPreviewLoading(false)
-      }
-    },
+      setCurrentPreview({ fragment, result })
+      
+      // Save assistant message to project
+      await saveMessage({
+        role: 'assistant',
+        content: [{ type: 'text' as const, text: fragment?.commentary || '' }]
+      })
+      
+      setCurrentTab('fragment')
+      setPreviewVisible(true)
+    }
   })
-
-  const handleProjectSelect = (project: Project) => {
-    // Clear current state before switching
-    setMessages([])
-    setFragment(undefined)
-    setResult(undefined)
-    setCurrentTab('code')
-    
-    setCurrentProjectId(project.id)
-    // Update template based on project
-    setSelectedTemplate(project.template_id as TemplateId)
-  }
-
-  const handleProjectCreate = async (projectData: Parameters<typeof createProject>[0]) => {
-    const { data, error } = await createProject(projectData)
-    if (data && !error) {
-      setCurrentProjectId(data.id)
-      setSelectedTemplate(data.template_id as TemplateId)
-      // Clear any existing state when creating new project
-      setMessages([])
-      setFragment(undefined)
-      setResult(undefined)
-      setCurrentTab('code')
-    } else if (error) {
-      console.error('Failed to create project:', error)
-      throw error // Propagate error to ProjectSelector
-    }
-  }
-
-  const handleProjectDelete = async (projectId: string) => {
-    try {
-      // If we're deleting the current project, clear it first
-      if (currentProjectId === projectId) {
-        // Clear all state first
-        setMessages([])
-        setFragment(undefined)
-        setResult(undefined)
-        setCurrentTab('code')
-        setCurrentProjectId(null) // Clear immediately
-      }
-      
-      // Kill the sandbox - Note: This uses the global client since it's client-side
-      // The sandbox will be killed but sandbox_id might not be cleared from DB without auth
-      try {
-        await SandboxManager.killProject(projectId)
-      } catch (sandboxError) {
-        console.error('Failed to kill sandbox:', sandboxError)
-        // Continue with deletion even if sandbox kill fails
-      }
-      
-      // Delete the project from database
-      const { error } = await deleteProject(projectId)
-      if (error) {
-        console.error('Failed to delete project:', error)
-        throw error
-      }
-      
-      // After successful deletion, select next project if we deleted current
-      if (currentProjectId === projectId) {
-        const remainingProjects = projects.filter(p => p.id !== projectId)
-        const nextProject = remainingProjects[0]
-        
-        if (nextProject) {
-          // Use setTimeout to avoid race condition
-          setTimeout(() => {
-            setCurrentProjectId(nextProject.id)
-            setSelectedTemplate(nextProject.template_id as TemplateId)
-          }, 100)
-        }
-      }
-    } catch (error) {
-      console.error('Error in handleProjectDelete:', error)
-      throw error
-    }
-  }
-
+  
+  const {
+    object,
+    isLoading,
+    isPreviewLoading,
+    error,
+    errorMessage,
+    isRateLimited,
+    submitChat,
+    retry,
+    stop
+  } = chatSubmission
+  
+  // Update fragment when object changes
   useEffect(() => {
     if (object) {
       setFragment(object)
-      const content: Message['content'] = [
-        { type: 'text', text: object.commentary || '' },
-        { type: 'code', text: object.code || '' },
+      const content = [
+        { type: 'text' as const, text: object.commentary || '' },
+        { type: 'code' as const, text: object.code || '' },
       ]
 
+      // Check if we need to add or update the message
+      const lastMessage = messages[messages.length - 1]
       if (!lastMessage || lastMessage.role !== 'assistant') {
         addMessage({
           role: 'assistant',
           content,
           object,
         })
-      }
-
-      if (lastMessage && lastMessage.role === 'assistant') {
-        setMessage({
+      } else if (lastMessage.role === 'assistant' && lastMessage.object !== object) {
+        updateMessage({
           content,
           object,
         })
       }
     }
-  }, [object])
-
+  }, [object, messages, addMessage, updateMessage]) // Include dependencies
+  
+  // Clear preview when project changes
   useEffect(() => {
-    if (error) stop()
-  }, [error])
-
-  // Clear state when project changes
-  useEffect(() => {
-    // Clear local state when project changes but not on initial mount
-    setFragment(undefined)
-    setResult(undefined)
-    setCurrentTab('code')
-  }, [currentProjectId])
-
-  function setMessage(message: Partial<Message>, index?: number) {
-    setMessages((previousMessages) => {
-      const updatedMessages = [...previousMessages]
-      updatedMessages[index ?? previousMessages.length - 1] = {
-        ...previousMessages[index ?? previousMessages.length - 1],
-        ...message,
-      }
-      return updatedMessages
-    })
-  }
-
-  async function handleSubmitAuth(e: React.FormEvent<HTMLFormElement>) {
+    clearPreview()
+    setPreviewVisible(false)
+  }, [currentProjectId]) // Remove clearPreview to avoid infinite loop
+  
+  // Model filtering
+  const filteredModels = modelsList.models.filter((model) => {
+    if (process.env.NEXT_PUBLIC_HIDE_LOCAL_MODELS) {
+      return model.providerId !== 'ollama'
+    }
+    return true
+  })
+  
+  const currentModel = filteredModels.find(
+    (model) => model.id === languageModel.model,
+  ) || filteredModels[0]
+  
+  const currentTemplate = templates
+  
+  // Handlers
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
 
     if (!session) {
@@ -270,213 +198,133 @@ export default function ProjectPage() {
 
     if (isLoading) {
       stop()
+      return
     }
 
-    const content: Message['content'] = [{ type: 'text', text: chatInput }]
-    const images = await toMessageImage(files)
-
-    if (images.length > 0) {
-      images.forEach((image) => {
-        content.push({ type: 'image', image })
-      })
-    }
-
-    const updatedMessages = addMessage({
-      role: 'user',
-      content,
-    })
+    const userMessage = await submitChat(
+      chatInput,
+      files,
+      messages,
+      currentTemplate,
+      currentModel,
+      languageModel,
+      selectedTemplate
+    )
+    
+    addMessage(userMessage)
     
     // Save user message to project
     await saveMessage({
       role: 'user',
-      content
-    })
-
-    submit({
-      userID: session?.user?.id,
-      teamID: userTeam?.id,
-      messages: toAISDKMessages(updatedMessages),
-      template: currentTemplate,
-      model: currentModel!,
-      config: languageModel,
+      content: userMessage.content
     })
 
     setChatInput('')
     setFiles([])
     setCurrentTab('code')
-
-    posthog.capture('chat_submit', {
-      template: selectedTemplate,
-      model: languageModel.model,
-      projectId: currentProjectId
-    })
+  }
+  
+  const handleRetry = () => {
+    retry(messages, currentTemplate, currentModel, languageModel)
   }
 
-  function addMessage(message: Message): Message[] {
-    const updatedMessages = [...messages, message]
-    setMessages(updatedMessages)
-    return updatedMessages
+  // Render states
+  if (!mounted) {
+    return <LoadingState />
   }
 
-  function setCurrentPreview(preview: {
-    fragment: DeepPartial<FragmentSchema> | undefined
-    result: ExecutionResult | undefined
-  }) {
-    setFragment(preview.fragment)
-    setResult(preview.result)
+  if (projectLoading && currentProjectId) {
+    return <LoadingState message="Loading project..." />
+  }
+
+  if (!currentProjectId) {
+    return (
+      <>
+        {supabase && (
+          <AuthDialog
+            open={isAuthDialogOpen}
+            setOpen={setAuthDialog}
+            view={authView}
+            supabase={supabase}
+          />
+        )}
+        <ProjectEmptyState
+          session={session}
+          userTeam={userTeam}
+          projects={projects}
+          onProjectSelect={handleProjectSelect}
+          onProjectCreate={handleProjectCreate}
+          onProjectDelete={handleProjectDelete}
+          onShowLogin={() => setAuthDialog(true)}
+          supabase={supabase}
+        />
+      </>
+    )
   }
 
   return (
     <main className="flex min-h-screen max-h-screen">
-      <AuthDialog
-        open={isAuthDialogOpen}
-        setOpen={setAuthDialog}
-        view={authView}
-        supabase={supabase}
-      />
-      
-      {!mounted ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="animate-pulse">Loading...</div>
-        </div>
-      ) : projectLoading && currentProjectId ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="animate-pulse">Loading project...</div>
-        </div>
-      ) : !currentProjectId ? (
-        <div className="grid w-full">
-          <div className="flex flex-col w-full max-h-full max-w-[800px] mx-auto px-4 overflow-auto col-span-2">
-            <NavBar 
-              session={session} 
-              showLogin={() => setAuthDialog(true)}
-              signOut={() => supabase?.auth.signOut()}
-              onClear={() => {
-                setMessages([])
-                setFragment(undefined)
-                setResult(undefined)
-              }}
-              canClear={messages.length > 0}
-              onUndo={() => {
-                setMessages(messages.slice(0, -2))
-                setFragment(undefined)
-                setResult(undefined)
-              }}
-              canUndo={messages.length > 1 && !isLoading}
-            >
-              {userTeam && (
-                <ProjectSelector
-                  projects={projects}
-                  currentProject={project}
-                  onProjectSelect={handleProjectSelect}
-                  onProjectCreate={handleProjectCreate}
-                  onProjectDelete={handleProjectDelete}
-                  teamId={userTeam.id}
-                />
-              )}
-            </NavBar>
-            <div className="flex-1 flex items-center justify-center p-8">
-              <div className="text-center space-y-4">
-                <h2 className="text-2xl font-semibold">Welcome to Fragments</h2>
-                <p className="text-muted-foreground">Select or create a project to get started</p>
-                {userTeam && (
-                  <ProjectSelector
-                    projects={projects}
-                    currentProject={null}
-                    onProjectSelect={handleProjectSelect}
-                    onProjectCreate={handleProjectCreate}
-                    onProjectDelete={handleProjectDelete}
-                    teamId={userTeam.id}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="grid w-full md:grid-cols-2">
-          <div className={`flex flex-col w-full max-h-full max-w-[800px] mx-auto px-4 overflow-auto ${fragment ? 'col-span-1' : 'col-span-2'}`}>
-            <NavBar 
-              session={session} 
-              showLogin={() => setAuthDialog(true)}
-              signOut={() => supabase?.auth.signOut()}
-              onClear={() => {
-                setMessages([])
-                setFragment(undefined)
-                setResult(undefined)
-              }}
-              canClear={messages.length > 0}
-              onUndo={() => {
-                setMessages(messages.slice(0, -2))
-                setFragment(undefined)
-                setResult(undefined)
-              }}
-              canUndo={messages.length > 1 && !isLoading}
-            >
-              {userTeam && (
-                <ProjectSelector
-                  projects={projects}
-                  currentProject={project}
-                  onProjectSelect={handleProjectSelect}
-                  onProjectCreate={handleProjectCreate}
-                  onProjectDelete={handleProjectDelete}
-                  teamId={userTeam.id}
-                />
-              )}
-            </NavBar>
-            <Chat
-              messages={messages}
-              isLoading={isLoading}
-              setCurrentPreview={setCurrentPreview}
-            />
-            <ChatInput
-              retry={() => submit({
-                userID: session?.user?.id,
-                teamID: userTeam?.id,
-                messages: toAISDKMessages(messages),
-                template: currentTemplate,
-                model: currentModel!,
-                config: languageModel,
-              })}
-              isErrored={error !== undefined}
-              errorMessage={errorMessage}
-              isLoading={isLoading}
-              isRateLimited={isRateLimited}
-              stop={stop}
-              input={chatInput}
-              handleInputChange={(e) => setChatInput(e.target.value)}
-              handleSubmit={handleSubmitAuth}
-              isMultiModal={currentModel?.multiModal || false}
-              files={files}
-              handleFileChange={setFiles}
-            >
-              <ChatPicker
-                templates={templates}
-                selectedTemplate={selectedTemplate}
-                onSelectedTemplateChange={setSelectedTemplate}
-                models={filteredModels}
-                languageModel={languageModel}
-                onLanguageModelChange={setLanguageModel}
-              />
-              <ChatSettings
-                languageModel={languageModel}
-                onLanguageModelChange={setLanguageModel}
-                apiKeyConfigurable={process.env.NEXT_PUBLIC_NO_API_KEY_INPUT !== 'true'}
-                baseURLConfigurable={process.env.NEXT_PUBLIC_NO_BASE_URL_INPUT !== 'true'}
-              />
-            </ChatInput>
-          </div>
-          <Preview
-            apiKey={languageModel?.apiKey}
-            selectedTab={currentTab}
-            onSelectedTabChange={setCurrentTab}
-            isChatLoading={isLoading}
-            isPreviewLoading={isPreviewLoading}
-            fragment={fragment}
-            result={result}
-            onClose={() => setCurrentTab('code')}
-          />
-        </div>
+      {supabase && (
+        <AuthDialog
+          open={isAuthDialogOpen}
+          setOpen={setAuthDialog}
+          view={authView}
+          supabase={supabase}
+        />
       )}
+      
+      <ProjectWorkspace
+        // Auth
+        session={session}
+        userTeam={userTeam}
+        supabase={supabase}
+        onShowLogin={() => setAuthDialog(true)}
+        
+        // Projects
+        projects={projects}
+        currentProject={project}
+        onProjectSelect={handleProjectSelect}
+        onProjectCreate={handleProjectCreate}
+        onProjectDelete={handleProjectDelete}
+        
+        // Chat state
+        messages={messages}
+        fragment={fragment}
+        result={result}
+        currentTab={currentTab}
+        setCurrentTab={setCurrentTab}
+        setCurrentPreview={setCurrentPreview}
+        clearPreview={clearPreview}
+        onClearChat={clearChat}
+        onUndo={undoLastMessage}
+        previewVisible={previewVisible}
+        setPreviewVisible={setPreviewVisible}
+        
+        // Chat input
+        chatInput={chatInput}
+        setChatInput={setChatInput}
+        files={files}
+        setFiles={setFiles}
+        onSubmit={handleSubmit}
+        
+        // Chat submission
+        isLoading={isLoading}
+        isPreviewLoading={isPreviewLoading}
+        error={error || null}
+        errorMessage={errorMessage}
+        isRateLimited={isRateLimited}
+        onRetry={handleRetry}
+        onStop={stop}
+        
+        // Models & Templates
+        templates={templates}
+        selectedTemplate={selectedTemplate}
+        setSelectedTemplate={setSelectedTemplate}
+        filteredModels={filteredModels}
+        languageModel={languageModel}
+        setLanguageModel={setLanguageModel}
+        currentModel={currentModel}
+      />
     </main>
   )
 }
